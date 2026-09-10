@@ -49,7 +49,6 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Límite general: máximo 300 peticiones cada 15 min por IP, para toda la API
 const limiteGeneral = rateLimit({
@@ -83,23 +82,34 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-const storage = multer.diskStorage({
-  destination: (_, __, cb) => cb(null, 'uploads/'),
-  filename: (_, file, cb) => {
-    const ext = path.extname(file.originalname) || '.jpg';
-    const nombreUnico = Date.now() + '-' + Math.round(Math.random() * 1e9) + ext;
-    cb(null, nombreUnico);
+const cloudinary = require('./cloudinary');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'nutricion-app/imagenes',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'webp']
   }
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10 MB máximo
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
+
+const storagePdf = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'nutricion-app/pdfs',
+    resource_type: 'raw',
+    allowed_formats: ['pdf']
+  }
 });
 
 const uploadPdf = multer({
-  storage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB máximo
+  storage: storagePdf,
+  limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype !== 'application/pdf') {
       return cb(new Error('Solo se permiten archivos PDF'));
@@ -1027,7 +1037,7 @@ app.post('/api/productos', verificarToken, upload.single('foto'), async (req, re
       return res.status(400).json({ message: 'Nombre y precio son obligatorios' });
     }
 
-    const foto = req.file ? `/uploads/${req.file.filename}` : null;
+    const foto = req.file ? req.file.path : null;
 
     const nuevoProducto = await Producto.create({
       nombre,
@@ -1063,7 +1073,7 @@ app.put('/api/productos/:id', verificarToken, upload.single('foto'), async (req,
     };
 
     if (req.file) {
-      datosActualizados.foto = `/uploads/${req.file.filename}`;
+      datosActualizados.foto = req.file.path;
     }
 
     const producto = await Producto.findByIdAndUpdate(
@@ -1240,7 +1250,7 @@ app.put('/api/inicio', verificarToken, upload.single('imagen'), async (req, res)
     const datosActualizados = { titulo, subtitulo, descripcion };
 
     if (req.file) {
-      datosActualizados.imagen = `/uploads/${req.file.filename}`;
+      datosActualizados.imagen = req.file.path;
     }
 
     let config = await InicioConfig.findOne();
@@ -1265,7 +1275,7 @@ app.post('/api/inicio/galeria', verificarToken, upload.array('imagenes', 8), asy
       return res.status(400).json({ message: 'No se recibió ninguna imagen' });
     }
 
-    const nuevasUrls = req.files.map(f => `/uploads/${f.filename}`);
+    const nuevasUrls = req.files.map(f => f.path);
 
     let config = await InicioConfig.findOne();
 
@@ -1603,7 +1613,7 @@ app.post('/api/recetas-admin', verificarToken, upload.single('foto'), async (req
       return res.status(400).json({ message: 'El nombre es obligatorio' });
     }
 
-    const foto = req.file ? `/uploads/${req.file.filename}` : null;
+    const foto = req.file ? req.file.path : null;
 
     const nuevaReceta = await Receta.create({
       nombre,
@@ -1641,7 +1651,7 @@ app.put('/api/recetas-admin/:id', verificarToken, upload.single('foto'), async (
     };
 
     if (req.file) {
-      datosActualizados.foto = `/uploads/${req.file.filename}`;
+      datosActualizados.foto = req.file.path;
     }
 
     const receta = await Receta.findByIdAndUpdate(req.params.id, datosActualizados, { new: true }).populate('categoriaId');
@@ -1685,7 +1695,7 @@ app.put('/api/recomendados', verificarToken, uploadPdf.single('pdf'), async (req
     const datosActualizados = { titulo, descripcion, actualizadoEn: new Date() };
 
     if (req.file) {
-      datosActualizados.archivoPdf = `/uploads/${req.file.filename}`;
+      datosActualizados.archivoPdf = req.file.path;
       datosActualizados.nombreArchivoOriginal = req.file.originalname;
     }
 
@@ -1707,6 +1717,11 @@ app.put('/api/recomendados', verificarToken, uploadPdf.single('pdf'), async (req
 /* ================= SERVIDOR ================= */
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en el puerto ${PORT}`);
-});
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Servidor corriendo en el puerto ${PORT}`);
+  });
+}
+
+module.exports = app;
