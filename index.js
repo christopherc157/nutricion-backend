@@ -83,32 +83,16 @@ const transporter = nodemailer.createTransport({
 });
 
 const cloudinary = require('./cloudinary');
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: {
-    folder: 'nutricion-app/imagenes',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'webp']
-  }
-});
-
+// En vez de escribir el archivo en disco, lo guardamos temporalmente en memoria
+// (como un "buffer"), y de ahí lo subimos nosotros mismos a Cloudinary.
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }
 });
 
-const storagePdf = new CloudinaryStorage({
-  cloudinary,
-  params: {
-    folder: 'nutricion-app/pdfs',
-    resource_type: 'raw',
-    allowed_formats: ['pdf']
-  }
-});
-
 const uploadPdf = multer({
-  storage: storagePdf,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype !== 'application/pdf') {
@@ -117,6 +101,18 @@ const uploadPdf = multer({
     cb(null, true);
   }
 });
+
+// Función auxiliar: sube un archivo (que está en memoria) a Cloudinary,
+// y devuelve la URL final una vez que termina de subirse.
+function subirACloudinary(buffer, opciones = {}) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(opciones, (error, resultado) => {
+      if (error) return reject(error);
+      resolve(resultado);
+    });
+    stream.end(buffer);
+  });
+}
 
 function formatearFechaVisual(fecha) {
   const [anio, mes, dia] = fecha.split('-');
@@ -1037,7 +1033,11 @@ app.post('/api/productos', verificarToken, upload.single('foto'), async (req, re
       return res.status(400).json({ message: 'Nombre y precio son obligatorios' });
     }
 
-    const foto = req.file ? req.file.path : null;
+    let foto = null;
+    if (req.file) {
+      const resultado = await subirACloudinary(req.file.buffer, { folder: 'nutricion-app/imagenes' });
+      foto = resultado.secure_url;
+    }
 
     const nuevoProducto = await Producto.create({
       nombre,
@@ -1073,7 +1073,8 @@ app.put('/api/productos/:id', verificarToken, upload.single('foto'), async (req,
     };
 
     if (req.file) {
-      datosActualizados.foto = req.file.path;
+      const resultado = await subirACloudinary(req.file.buffer, { folder: 'nutricion-app/imagenes' });
+      datosActualizados.foto = resultado.secure_url;
     }
 
     const producto = await Producto.findByIdAndUpdate(
@@ -1250,7 +1251,8 @@ app.put('/api/inicio', verificarToken, upload.single('imagen'), async (req, res)
     const datosActualizados = { titulo, subtitulo, descripcion };
 
     if (req.file) {
-      datosActualizados.imagen = req.file.path;
+      const resultado = await subirACloudinary(req.file.buffer, { folder: 'nutricion-app/imagenes' });
+      datosActualizados.imagen = resultado.secure_url;
     }
 
     let config = await InicioConfig.findOne();
@@ -1275,7 +1277,11 @@ app.post('/api/inicio/galeria', verificarToken, upload.array('imagenes', 8), asy
       return res.status(400).json({ message: 'No se recibió ninguna imagen' });
     }
 
-    const nuevasUrls = req.files.map(f => f.path);
+    const nuevasUrls = [];
+    for (const file of req.files) {
+      const resultado = await subirACloudinary(file.buffer, { folder: 'nutricion-app/imagenes' });
+      nuevasUrls.push(resultado.secure_url);
+    }
 
     let config = await InicioConfig.findOne();
 
@@ -1613,7 +1619,11 @@ app.post('/api/recetas-admin', verificarToken, upload.single('foto'), async (req
       return res.status(400).json({ message: 'El nombre es obligatorio' });
     }
 
-    const foto = req.file ? req.file.path : null;
+    let foto = null;
+    if (req.file) {
+      const resultado = await subirACloudinary(req.file.buffer, { folder: 'nutricion-app/imagenes' });
+      foto = resultado.secure_url;
+    }
 
     const nuevaReceta = await Receta.create({
       nombre,
@@ -1651,7 +1661,8 @@ app.put('/api/recetas-admin/:id', verificarToken, upload.single('foto'), async (
     };
 
     if (req.file) {
-      datosActualizados.foto = req.file.path;
+      const resultado = await subirACloudinary(req.file.buffer, { folder: 'nutricion-app/imagenes' });
+      datosActualizados.foto = resultado.secure_url;
     }
 
     const receta = await Receta.findByIdAndUpdate(req.params.id, datosActualizados, { new: true }).populate('categoriaId');
@@ -1695,7 +1706,11 @@ app.put('/api/recomendados', verificarToken, uploadPdf.single('pdf'), async (req
     const datosActualizados = { titulo, descripcion, actualizadoEn: new Date() };
 
     if (req.file) {
-      datosActualizados.archivoPdf = req.file.path;
+      const resultado = await subirACloudinary(req.file.buffer, {
+        folder: 'nutricion-app/pdfs',
+        resource_type: 'raw'
+      });
+      datosActualizados.archivoPdf = resultado.secure_url;
       datosActualizados.nombreArchivoOriginal = req.file.originalname;
     }
 
